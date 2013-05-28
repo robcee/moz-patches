@@ -1,0 +1,17 @@
+# HG changeset patch
+# Parent ba5e8fc1a47d34ccd3aa5fe158f0e62f45864870
+# User Rob Campbell <rcampbell@mozilla.com>
+Bug 860349 - Intermittent browser_dbg_createChrome.js | application timed out after 330 seconds with no output; r=testonly
+
+diff --git a/browser/devtools/debugger/test/browser_dbg_createChrome.js b/browser/devtools/debugger/test/browser_dbg_createChrome.js
+--- a/browser/devtools/debugger/test/browser_dbg_createChrome.js
++++ b/browser/devtools/debugger/test/browser_dbg_createChrome.js
+@@ -12,7 +12,7 @@ var gDebuggee = null;
+ 
+ function test() {
+   // Windows XP test slaves are terribly slow at this test.
+-  requestLongerTimeout(2);
++  requestLongerTimeout(4);
+ 
+   debug_chrome(STACK_URL, aOnClosing, function(aTab, aDebuggee, aProcess) {
+     gTab = aTab;

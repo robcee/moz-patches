@@ -1,0 +1,307 @@
+# vim: se ft=diff :
+# HG changeset patch
+# User Johan Charlez <johan.charlez@gmail.com>
+# Date 2012-10-26 15:05
+Bug 656273 - Create a toolbar for Scratchpad. r=robcee
+
+# HG changeset patch
+# Parent 7431f2ef9bc3a5c47d546ef78ce0aeff08d27179
+# User Johan Charlez <johan.charlez@gmail.com>
+Bug 656273 - Create a toolbar for Scratchpad. r=robcee
+
+diff --git a/browser/devtools/scratchpad/scratchpad-manager.jsm b/browser/devtools/scratchpad/scratchpad-manager.jsm
+--- a/browser/devtools/scratchpad/scratchpad-manager.jsm
++++ b/browser/devtools/scratchpad/scratchpad-manager.jsm
+@@ -129,6 +129,35 @@ this.ScratchpadManager = {
+     ShutdownObserver.init();
+ 
+     return win;
++  },
++
++  /**
++   * Toggles the Scratchpad Toolbar.
++   *
++   * @param event aEvent
++   *        The event associated with the 'toggleToolbar'-command.
++   */
++  toggleToolbar: function SPM_toggleToolbar(aEvent)
++  {
++    let checked = aEvent.target.getAttribute("checked");
++    let enumerator = Services.wm.getEnumerator("devtools:scratchpad");
++
++    _log("checked: " + checked);
++    while (enumerator.hasMoreElements()) {
++      _log("whileloop");
++      let doc = enumerator.getNext().document;
++      let menuitem = doc.getElementById("sp-menu-showToolbar");
++      let toolbar = doc.getElementById("sp-toolbar");
++      if (checked) {
++        toolbar.setAttribute("collapsed", "false");
++        if (menuitem !== aEvent.explicitOriginalTarget)
++          menuitem.setAttribute("checked", "false");
++      } else {
++        toolbar.setAttribute("collapsed", "true");
++        if (menuitem !== aEvent.explicitOriginalTarget)
++          menuitem.setAttribute("checked", "true");
++      }
++    }
+   }
+ };
+ 
+@@ -163,4 +192,9 @@ var ShutdownObserver = {
+   {
+     Services.obs.removeObserver(this, "quit-application-granted");
+   }
+-};
+\ No newline at end of file
++};
++
++function _log(aString) {
++  var consoleService = Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService);
++  consoleService.logStringMessage("scratchpad: " + aString);
++}
+\ No newline at end of file
+diff --git a/browser/devtools/scratchpad/scratchpad.js b/browser/devtools/scratchpad/scratchpad.js
+--- a/browser/devtools/scratchpad/scratchpad.js
++++ b/browser/devtools/scratchpad/scratchpad.js
+@@ -1196,6 +1196,10 @@ var Scratchpad = {
+       errorConsoleCommand.removeAttribute("disabled");
+     }
+ 
++    if (document.getElementById("sp-toolbar").collapsed === true) {
++      document.getElementById("sp-menu-showToolbar").removeAttribute("checked");
++    }
++
+     let initialText = this.strings.formatStringFromName(
+       "scratchpadIntro1",
+       [LayoutHelpers.prettyKey(document.getElementById("sp-key-run")),
+@@ -1424,6 +1428,7 @@ var Scratchpad = {
+       if (shouldClose) {
+         window.close();
+       }
++
+       if (aCallback) {
+         aCallback();
+       }
+@@ -1492,6 +1497,9 @@ var Scratchpad = {
+     }
+   },
+ 
++  /**
++   * Opens the MDN documentation page for Scratchpad.
++   */
+   openDocumentationPage: function SP_openDocumentationPage()
+   {
+     let url = this.strings.GetStringFromName("help.openDocumentationPage");
+diff --git a/browser/devtools/scratchpad/scratchpad.xul b/browser/devtools/scratchpad/scratchpad.xul
+--- a/browser/devtools/scratchpad/scratchpad.xul
++++ b/browser/devtools/scratchpad/scratchpad.xul
+@@ -9,6 +9,7 @@
+  %scratchpadDTD;
+ ]>
+ <?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
++<?xml-stylesheet href="chrome://browser/skin/devtools/common.css" type="text/css"?>
+ <?xul-overlay href="chrome://global/content/editMenuOverlay.xul"?>
+ <?xul-overlay href="chrome://browser/content/source-editor-overlay.xul"?>
+ 
+@@ -41,6 +42,7 @@
+  -->
+ 
+   <command id="sp-cmd-close" oncommand="Scratchpad.close();"/>
++  <command id="sp-cmd-toggleToolbar" oncommand="ScratchpadManager.toggleToolbar(event);"/>
+   <command id="sp-cmd-run" oncommand="Scratchpad.run();"/>
+   <command id="sp-cmd-inspect" oncommand="Scratchpad.inspect();"/>
+   <command id="sp-cmd-display" oncommand="Scratchpad.display();"/>
+@@ -156,7 +158,6 @@
+                 command="sp-cmd-close"/>
+     </menupopup>
+   </menu>
+-
+   <menu id="sp-edit-menu" label="&editMenu.label;"
+         accesskey="&editMenu.accesskey;">
+     <menupopup id="sp-menu_editpopup"
+@@ -176,7 +177,17 @@
+       <menuitem id="se-menu-gotoLine"/>
+     </menupopup>
+   </menu>
+-
++  <menu id="sp-view-menu" label="&viewMenu.label;"
++        accesskey="&viewMenu.accesskey;">
++    <menupopup id="sp-menu_viewpopup">
++      <menuitem id="sp-menu-showToolbar"
++                label="&toggleToolbar.label;"
++                accesskey="&toggleToolbar.accesskey;"
++                type="checkbox"
++                checked="true"
++                command="sp-cmd-toggleToolbar"/>
++    </menupopup>
++  </menu>
+   <menu id="sp-execute-menu" label="&executeMenu.label;"
+         accesskey="&executeMenu.accesskey;">
+     <menupopup id="sp-menu_executepopup">
+@@ -246,6 +257,45 @@
+   </menu>
+ </menubar>
+ 
++<toolbar id="sp-toolbar"
++         class="devtools-toolbar"
++         collapsed="false"
++         persist="collapsed">
++  <toolbarbutton id="sp-toolbar-open"
++                 class="devtools-toolbarbutton"
++                 label="&openFileCmd.label;"
++                 command="sp-cmd-openFile"/>
++  <toolbarbutton id="sp-toolbar-save"
++                 class="devtools-toolbarbutton"
++                 label="&saveFileCmd.label;"
++                 command="sp-cmd-save"/>
++  <toolbarbutton id="sp-toolbar-saveAs"
++                 class="devtools-toolbarbutton"
++                 label="&saveFileAsCmd.label;"
++                 command="sp-cmd-saveas"/>
++  <toolbarspacer/>
++  <toolbarbutton id="sp-toolbar-run"
++                 class="devtools-toolbarbutton"
++                 label="&run.label;"
++                 command="sp-cmd-run"/>
++  <toolbarbutton id="sp-toolbar-inspect"
++                 class="devtools-toolbarbutton"
++                 label="&inspect.label;"
++                 command="sp-cmd-inspect"/>
++  <toolbarbutton id="sp-toolbar-display"
++                 class="devtools-toolbarbutton"
++                 label="&display.label;"
++                 command="sp-cmd-display"/>
++  <!-- TODO: bug 650340 - implement printFile
++  <toolbarspacer/>
++  <toolbarbutton id="sp-toolbar-print"
++                 label="&printCmd.label;"
++                 accesskey="&printCmd.accesskey;"
++                 command="sp-cmd-printFile"/>
++  -->
++</toolbar>
++
++
+ <popupset id="scratchpad-popups">
+   <menupopup id="scratchpad-text-popup"
+              onpopupshowing="goUpdateSourceEditorMenuItems()">
+diff --git a/browser/devtools/scratchpad/test/Makefile.in b/browser/devtools/scratchpad/test/Makefile.in
+--- a/browser/devtools/scratchpad/test/Makefile.in
++++ b/browser/devtools/scratchpad/test/Makefile.in
+@@ -17,6 +17,7 @@ MOCHITEST_BROWSER_FILES = \
+ 		browser_scratchpad_execute_print.js \
+ 		browser_scratchpad_inspect.js \
+ 		browser_scratchpad_files.js \
++		browser_scratchpad_toolbar.js \
+ 		browser_scratchpad_ui.js \
+ 		browser_scratchpad_bug_646070_chrome_context_pref.js \
+ 		browser_scratchpad_bug_660560_tab.js \
+diff --git a/browser/devtools/scratchpad/test/browser_scratchpad_toolbar.js b/browser/devtools/scratchpad/test/browser_scratchpad_toolbar.js
+new file mode 100644
+--- /dev/null
++++ b/browser/devtools/scratchpad/test/browser_scratchpad_toolbar.js
+@@ -0,0 +1,88 @@
++/* vim: set ts=2 et sw=2 tw=80: */
++/* Any copyright is dedicated to the Public Domain.
++   http://creativecommons.org/publicdomain/zero/1.0/ */
++
++// Reference to the 'Toggle Toolbar'-menuitem in the initial Scratchpad Window.
++let sWindow;
++let doc;
++let menuitem;
++
++function test()
++{
++  waitForExplicitFinish();
++
++  registerCleanupFunction(function() {
++    menuitem = null;
++    doc = null;
++    sWindow = null;
++  });
++
++  gBrowser.selectedTab = gBrowser.addTab();
++  gBrowser.selectedBrowser.addEventListener("load", function onTabLoad() {
++    gBrowser.selectedBrowser.removeEventListener("load", onTabLoad, true);
++    openScratchpad(testFirstRunAttributeValues);
++  }, true);
++
++  content.location = "data:text/html,Scratchpad test for the Scratchpad Toolbar, bug 656273";
++}
++
++function testFirstRunAttributeValues(aWindow, aScratchpad)
++{
++  sWindow = aWindow;
++  doc = aWindow.document;
++  menuitem = doc.getElementById("sp-menu-showToolbar");
++  let checked = menuitem.getAttribute("checked");
++  let collapsed = doc.getElementById("sp-toolbar").getAttribute("collapsed");
++
++  is(checked, "true", "Passed: The menuitem is checked");
++  is(collapsed, "false", "Passed: The Scratchpad Toolbar is visible");
++
++  // Open a new Scratchpad window so that we can test if the toolbar is
++  // toggled properly in multiple windows.
++  openScratchpad(toggleToolbar);
++  sWindow.focus();
++}
++
++function toggleToolbar()
++{
++  waitForExplicitFinish();
++  // Use the menuitem that toggles the menubar.
++  doc.getElementById("sp-menu-showToolbar").doCommand();
++
++  SimpleTest.executeSoon(function() {
++    testDisablingToolbar();
++  });
++}
++
++function testDisablingToolbar()
++{
++  waitForExplicitFinish();
++
++  let enumerator = Services.wm.getEnumerator("devtools:scratchpad");
++  while (enumerator.hasMoreElements()) {
++    let win = enumerator.getNext();
++    let doc = win.document;
++    let checked = doc.getElementById("sp-menu-showToolbar").getAttribute("checked");
++    let collapsed = doc.getElementById("sp-toolbar").getAttribute("collapsed");
++    is(checked, "", "Passed: The menuitem is not checked");
++    is(collapsed, "true", "Passed: The Scratchpad Toolbar is not visible");
++
++    win.close();
++  }
++
++  openScratchpad(testToolbarCollapsed);
++}
++
++// Verify that after closing all Scratchpads, and opening a new Scratchpad,
++// the toolbar remains collapsed, and the menuitem unchecked.
++function testToolbarCollapsed(aWindow, aScratchpad)
++{
++  let menuitem = aWindow.document.getElementById("sp-menu-showToolbar");
++  let checked = menuitem.getAttribute("checked");
++  let collapsed = doc.getElementById("sp-toolbar").getAttribute("collapsed");
++
++  is(checked, "", "Passed: The menuitem is checked");
++  is(collapsed, "true", "Passed: The Scratchpad Toolbar is visible");
++
++  finish();
++}
+diff --git a/browser/locales/en-US/chrome/browser/devtools/scratchpad.dtd b/browser/locales/en-US/chrome/browser/devtools/scratchpad.dtd
+--- a/browser/locales/en-US/chrome/browser/devtools/scratchpad.dtd
++++ b/browser/locales/en-US/chrome/browser/devtools/scratchpad.dtd
+@@ -53,6 +53,12 @@
+ <!ENTITY editMenu.label               "Edit">
+ <!ENTITY editMenu.accesskey           "E">
+ 
++<!ENTITY viewMenu.label               "View">
++<!ENTITY viewMenu.accesskey           "V">
++
++<!ENTITY toggleToolbar.label          "Show Toolbar">
++<!ENTITY toggleToolbar.accesskey      "S">
++
+ <!ENTITY run.label                    "Run">
+ <!ENTITY run.accesskey                "R">
+ <!ENTITY run.key                      "r">

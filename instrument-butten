@@ -1,0 +1,217 @@
+# HG changeset patch
+# Parent 36cd40523c3a158c9acc400cd3a1b5e7f750d91f
+# User Rob Campbell <rcampbell@mozilla.com>
+Bug 871630 - Add the collapse/expand button to the Console toolbar to show/hide the VariablesView
+
+diff --git a/browser/devtools/webconsole/test/Makefile.in b/browser/devtools/webconsole/test/Makefile.in
+--- a/browser/devtools/webconsole/test/Makefile.in
++++ b/browser/devtools/webconsole/test/Makefile.in
+@@ -129,6 +129,7 @@ MOCHITEST_BROWSER_FILES = \
+ 	browser_bug_869003_inspect_cross_domain_object.js \
+ 	browser_bug_862916_console_dir_and_filter_off.js \
+ 	browser_console_native_getters.js \
++	browser_bug_871630_variable_view_close_on_button.js \
+ 	head.js \
+ 	$(NULL)
+ 
+diff --git a/browser/devtools/webconsole/test/browser_bug_871630_variable_view_close_on_button.js b/browser/devtools/webconsole/test/browser_bug_871630_variable_view_close_on_button.js
+new file mode 100644
+--- /dev/null
++++ b/browser/devtools/webconsole/test/browser_bug_871630_variable_view_close_on_button.js
+@@ -0,0 +1,43 @@
++/*
++ * Any copyright is dedicated to the Public Domain.
++ * http://creativecommons.org/publicdomain/zero/1.0/
++ */
++
++// Check that the variables view sidebar can be closed by pressing Escape in the
++// web console.
++
++const TEST_URI = "http://example.com/browser/browser/devtools/webconsole/test/test-eval-in-stackframe.html";
++
++let gWebConsole, gJSTerm, gVariablesView;
++
++function test()
++{
++  registerCleanupFunction(() => {
++    gWebConsole = gJSTerm = gVariablesView = null;
++  });
++
++  addTab(TEST_URI);
++  browser.addEventListener("load", function onLoad() {
++    browser.removeEventListener("load", onLoad, true);
++    openConsole(null, consoleOpened);
++  }, true);
++}
++
++function consoleOpened(hud)
++{
++  gWebConsole = hud;
++  gJSTerm = hud.jsterm;
++  gJSTerm.once("variablesview-fetched", onViewFetch);
++  gJSTerm.execute("inspect(window)");
++}
++
++function onViewFetch(aEvent, aVar)
++{
++  gVariablesView = aVar._variablesView;
++  ok(gVariablesView, "variables view object");
++
++  gJSTerm.once("sidebar-closed", finishTest);
++  let butten = gWebConsole.ui.rootElement.querySelector("#instruments-pane-toggle");
++  EventUtils.sendMouseEvent({ type: "click" }, butten);
++}
++
+diff --git a/browser/devtools/webconsole/webconsole.js b/browser/devtools/webconsole/webconsole.js
+--- a/browser/devtools/webconsole/webconsole.js
++++ b/browser/devtools/webconsole/webconsole.js
+@@ -454,41 +454,45 @@ WebConsoleFrame.prototype = {
+     }
+ 
+     let saveBodies = doc.getElementById("saveBodies");
+-    saveBodies.addEventListener("command", function() {
++    saveBodies.addEventListener("command", () => {
+       this.saveRequestAndResponseBodies = !this.saveRequestAndResponseBodies;
+-    }.bind(this));
++    });
+     saveBodies.setAttribute("checked", this.saveRequestAndResponseBodies);
+     saveBodies.disabled = !this.getFilterState("networkinfo") &&
+                           !this.getFilterState("network");
+ 
+-    saveBodies.parentNode.addEventListener("popupshowing", function() {
++    saveBodies.parentNode.addEventListener("popupshowing", () => {
+       saveBodies.setAttribute("checked", this.saveRequestAndResponseBodies);
+       saveBodies.disabled = !this.getFilterState("networkinfo") &&
+                             !this.getFilterState("network");
+-    }.bind(this));
++    });
+ 
+     // Remove this part when context menu entry is removed.
+     let saveBodiesContextMenu = doc.getElementById("saveBodiesContextMenu");
+-    saveBodiesContextMenu.addEventListener("command", function() {
++    saveBodiesContextMenu.addEventListener("command", () => {
+       this.saveRequestAndResponseBodies = !this.saveRequestAndResponseBodies;
+-    }.bind(this));
++    });
+     saveBodiesContextMenu.setAttribute("checked",
+                                        this.saveRequestAndResponseBodies);
+     saveBodiesContextMenu.disabled = !this.getFilterState("networkinfo") &&
+                                      !this.getFilterState("network");
+ 
+-    saveBodiesContextMenu.parentNode.addEventListener("popupshowing", function() {
++    saveBodiesContextMenu.parentNode.addEventListener("popupshowing", () => {
+       saveBodiesContextMenu.setAttribute("checked",
+                                          this.saveRequestAndResponseBodies);
+       saveBodiesContextMenu.disabled = !this.getFilterState("networkinfo") &&
+                                        !this.getFilterState("network");
+-    }.bind(this));
++    });
+ 
+     let clearButton = doc.getElementsByClassName("webconsole-clear-console-button")[0];
+-    clearButton.addEventListener("command", function WCF__onClearButton() {
++    clearButton.addEventListener("command", () => {
+       this.owner._onClearButton();
+       this.jsterm.clearOutput(true);
+-    }.bind(this));
++    });
++
++    let collapseButton = doc.getElementById("instruments-pane-toggle");
++    collapseButton.addEventListener("click", () => {
++      this.jsterm._sidebarDestroy(); }, false);
+ 
+     this.jsterm = new JSTerm(this);
+     this.jsterm.init();
+diff --git a/browser/devtools/webconsole/webconsole.xul b/browser/devtools/webconsole/webconsole.xul
+--- a/browser/devtools/webconsole/webconsole.xul
++++ b/browser/devtools/webconsole/webconsole.xul
+@@ -134,6 +134,10 @@
+                  placeholder="&filterOutput.placeholder;"/>
+         <toolbarbutton class="webconsole-clear-console-button devtools-toolbarbutton"
+                        label="&btnClear.label;" tooltiptext="&btnClear.tooltip;"/>
++        <toolbarbutton id="instruments-pane-toggle"
++                       class="devtools-toolbarbutton"
++                       tooltiptext="&collapseSidebar.label;"
++                       tabindex="0"/>
+       </toolbar>
+ 
+       <richlistbox class="hud-output-node" orient="vertical" flex="1"
+diff --git a/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd b/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd
+--- a/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd
++++ b/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd
+@@ -81,3 +81,5 @@
+ <!ENTITY copyURLCmd.accesskey "a">
+ 
+ <!ENTITY closeCmd.key  "W">
++
++<!ENTITY collapseSidebar.label "Collapse Sidebar">
+diff --git a/browser/themes/linux/devtools/webconsole.css b/browser/themes/linux/devtools/webconsole.css
+--- a/browser/themes/linux/devtools/webconsole.css
++++ b/browser/themes/linux/devtools/webconsole.css
+@@ -256,3 +256,20 @@
+   background-image: linear-gradient(#FF3030, #FF7D7D);
+   border-color: #D12C2C;
+ }
++
++#instruments-pane-toggle {
++  background: none;
++  box-shadow: none;
++  border: none;
++  list-style-image: url("chrome://browser/skin/devtools/debugger-collapse.png");
++  -moz-image-region: rect(0px,16px,16px,0px);
++}
++
++#instruments-pane-toggle[pane-collapsed] {
++  list-style-image: url("chrome://browser/skin/devtools/debugger-expand.png");
++}
++
++#instruments-pane-toggle:active {
++  -moz-image-region: rect(0px,32px,16px,16px);
++}
++
+diff --git a/browser/themes/osx/devtools/webconsole.css b/browser/themes/osx/devtools/webconsole.css
+--- a/browser/themes/osx/devtools/webconsole.css
++++ b/browser/themes/osx/devtools/webconsole.css
+@@ -260,3 +260,19 @@
+   background-image: linear-gradient(#FF3030, #FF7D7D);
+   border-color: #D12C2C;
+ }
++
++#instruments-pane-toggle {
++  background: none;
++  box-shadow: none;
++  border: none;
++  list-style-image: url("chrome://browser/skin/devtools/debugger-collapse.png");
++  -moz-image-region: rect(0px,16px,16px,0px);
++}
++
++#instruments-pane-toggle[pane-collapsed] {
++  list-style-image: url("chrome://browser/skin/devtools/debugger-expand.png");
++}
++
++#instruments-pane-toggle:active {
++  -moz-image-region: rect(0px,32px,16px,16px);
++}
+diff --git a/browser/themes/windows/devtools/webconsole.css b/browser/themes/windows/devtools/webconsole.css
+--- a/browser/themes/windows/devtools/webconsole.css
++++ b/browser/themes/windows/devtools/webconsole.css
+@@ -265,3 +265,20 @@
+   background-image: linear-gradient(#FF3030, #FF7D7D);
+   border-color: #D12C2C;
+ }
++
++#instruments-pane-toggle {
++  background: none;
++  box-shadow: none;
++  border: none;
++  list-style-image: url("chrome://browser/skin/devtools/debugger-collapse.png");
++  -moz-image-region: rect(0px,16px,16px,0px);
++}
++
++#instruments-pane-toggle[pane-collapsed] {
++  list-style-image: url("chrome://browser/skin/devtools/debugger-expand.png");
++}
++
++#instruments-pane-toggle:active {
++  -moz-image-region: rect(0px,32px,16px,16px);
++}
++

@@ -1,0 +1,69 @@
+# HG changeset patch
+# Parent 1bb9bd71b33d5ba2d87764662b79fe46f4d42d9d
+# User Rob Campbell <rcampbell@mozilla.com>
+diff --git a/browser/devtools/webconsole/webconsole.js b/browser/devtools/webconsole/webconsole.js
+--- a/browser/devtools/webconsole/webconsole.js
++++ b/browser/devtools/webconsole/webconsole.js
+@@ -492,7 +492,7 @@ WebConsoleFrame.prototype = {
+ 
+     let collapseButton = doc.getElementById("instruments-pane-toggle");
+     collapseButton.addEventListener("click", () => {
+-      this.jsterm._sidebarDestroy(); }, false);
++      this.jsterm._sidebarToggle(); }, false);
+ 
+     this.jsterm = new JSTerm(this);
+     this.jsterm.init();
+@@ -2684,7 +2684,7 @@ JSTerm.prototype = {
+   /**
+    * The Web Console sidebar.
+    * @see this._createSidebar()
+-   * @see Sidebar.jsm
++   * XXX @see Sidebar.jsm - VariablesView.jsm?
+    */
+   sidebar: null,
+ 
+@@ -3150,7 +3150,7 @@ JSTerm.prototype = {
+         return;
+     }
+ 
+-    this._sidebarDestroy();
++    this._hideSidebar();
+     this.inputNode.focus();
+   },
+ 
+@@ -3825,7 +3825,7 @@ JSTerm.prototype = {
+           aEvent.preventDefault();
+         }
+         else if (this.sidebar) {
+-          this._sidebarDestroy();
++          this._sidebarClose();
+         }
+         break;
+ 
+@@ -4236,6 +4236,26 @@ JSTerm.prototype = {
+     });
+   },
+ 
++  _hideSidebar: function JST__hideSidebar()
++  {
++    this.sidebar.hide();
++    this.emit("sidebar-closed");
++  },
++
++  _sidebarToggle: function JST__sidebarToggle()
++  {
++    if (this.sidebar && this.sidebar.hidden == false) {
++      return void this._hideSidebar();
++    }
++
++    if (this.sidebar && this.sidebar.hidden) {
++      this.sidebar.show();
++      return void this.emit("sidebar-shown");
++    }
++
++    // do nothing, no previously hidden sidebar to display.
++  },
++
+   /**
+    * Destroy the sidebar.
+    * @private

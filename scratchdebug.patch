@@ -1,0 +1,66 @@
+# HG changeset patch
+# Parent b8b75a9e321419fdc32ed7cd04faf13e9b79f110
+# User Rob Campbell <rcampbell@mozilla.com>
+diff --git a/browser/devtools/scratchpad/scratchpad.js b/browser/devtools/scratchpad/scratchpad.js
+--- a/browser/devtools/scratchpad/scratchpad.js
++++ b/browser/devtools/scratchpad/scratchpad.js
+@@ -28,9 +28,11 @@ Cu.import("resource:///modules/devtools/
+ Cu.import("resource://gre/modules/jsdebugger.jsm");
+ Cu.import("resource:///modules/devtools/gDevTools.jsm");
+ Cu.import("resource:///modules/devtools/Target.jsm");
++Cu.import("resource://gre/modules/devtools/dbg-client.jsm");
+ 
+ const SCRATCHPAD_CONTEXT_CONTENT = 1;
+ const SCRATCHPAD_CONTEXT_BROWSER = 2;
++const SCRATCHPAD_CONTEXT_DEBUGGER = 3;
+ const SCRATCHPAD_L10N = "chrome://browser/locale/devtools/scratchpad.properties";
+ const DEVTOOLS_CHROME_ENABLED = "devtools.chrome.enabled";
+ const PREF_RECENT_FILES_MAX = "devtools.scratchpad.recentFilesMax";
+@@ -55,8 +57,10 @@ var Scratchpad = {
+    *   tab content window object.
+    *   - SCRATCHPAD_CONTEXT_BROWSER to execute code in the context of the
+    *   currently active chrome window object.
++   *   - SCRATCHPAD_CONTEXT_DEBUGGER to execute code in the context of the
++   *   current tab content window object via the Debugger API.
+    */
+-  executionContext: SCRATCHPAD_CONTEXT_CONTENT,
++  executionContext: SCRATCHPAD_CONTEXT_DEBUGGER,
+ 
+   /**
+    * Tells if this Scratchpad is initialized and ready for use.
+@@ -209,6 +213,11 @@ var Scratchpad = {
+   _contentSandbox: null,
+ 
+   /**
++   * Cached Debugger object for the active tab content window object.
++   */
++  _contentDebugger: null,
++
++  /**
+    * Unique name for the current Scratchpad instance. Used to distinguish
+    * Scratchpad windows between each other. See bug 661762.
+    */
+@@ -250,6 +259,23 @@ var Scratchpad = {
+     return this._contentSandbox;
+   },
+ 
++  get contentDebugger()
++  {
++    if (!this.browserWindow) {
++      Cu.reportError(this.strings.
++                     GetStringFromName("browserWindow.unavailable"));
++      return;
++    }
++
++    if (!this._contentDebugger ||
++        this.browserWindow != this._previousBrowserWindow ||
++        this._previousBrowser != this.gBrowser.selectedBrowser ||
++        this._previousLocation != this.gBrowser.contentWindow.location.href) {
++      let contentWindow = this.gBrowser.selectedBrowser.contentWindow;
++      this._contentDebugger = 
++    }
++  },
++
+   /**
+    * Cached Cu.Sandbox object for the most recently active navigator:browser
+    * chrome window object.

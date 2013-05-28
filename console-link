@@ -1,0 +1,33 @@
+# HG changeset patch
+# Parent 3b188f54424e7a614ac3bfafa8d65b35b2a6c89e
+# User Rob Campbell <rcampbell@mozilla.com>
+didn't fix
+
+diff --git a/browser/devtools/webconsole/webconsole.js b/browser/devtools/webconsole/webconsole.js
+--- a/browser/devtools/webconsole/webconsole.js
++++ b/browser/devtools/webconsole/webconsole.js
+@@ -2372,7 +2372,7 @@ WebConsoleFrame.prototype = {
+     locationNode.classList.add("text-link");
+ 
+     // Make the location clickable.
+-    locationNode.addEventListener("click", function() {
++    locationNode.addEventListener("click", () => {
+       if (/^Scratchpad\/\d+$/.test(aSourceURL)) {
+         let wins = Services.wm.getEnumerator("devtools:scratchpad");
+ 
+@@ -2393,9 +2393,13 @@ WebConsoleFrame.prototype = {
+         this.owner.viewSourceInDebugger(aSourceURL, aSourceLine);
+       }
+       else {
+-        this.owner.viewSource(aSourceURL, aSourceLine);
++        let linkURL = /->/.test(aSourceURL) ?
++                        /(\w.+) -> (\w.+)/.exec(aSourceURL)[2] :
++                        aSourceURL;
++
++        this.owner.viewSource(linkURL, aSourceLine);
+       }
+-    }.bind(this), true);
++    }, true);
+ 
+     return locationNode;
+   },

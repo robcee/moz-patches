@@ -1,0 +1,27 @@
+# HG changeset patch
+# Parent 825230fd88bb33181684c66c9416744e786e6225
+# User Rob Campbell <rcampbell@mozilla.com>
+
+diff --git a/browser/devtools/debugger/debugger.xul b/browser/devtools/debugger/debugger.xul
+--- a/browser/devtools/debugger/debugger.xul
++++ b/browser/devtools/debugger/debugger.xul
+@@ -66,6 +66,8 @@
+              oncommand="DebuggerView.Options._toggleShowVariablesFilterBox()"/>
+     <command id="toggleShowOriginalSource"
+              oncommand="DebuggerView.Options._toggleShowOriginalSource()"/>
++    <command id="newScript"
++             oncommand="DebuggerView.Sources._onCmdNewScript()"/>
+   </commandset>
+ 
+   <popupset id="debuggerPopupset">
+@@ -254,6 +256,10 @@
+                 class="devtools-menulist"
+                 sizetopopup="none" hidden="true"/>
+       <vbox id="stackframes" flex="1"/>
++      <toolbarbutton id="new-source"
++               class="devtools-toolbarbutton"
++               label="New"
++               command="cmdNewFile"/>
+       <textbox id="searchbox"
+                class="devtools-searchinput" type="search"/>
+       <toolbarbutton id="instruments-pane-toggle"

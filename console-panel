@@ -1,0 +1,193 @@
+# HG changeset patch
+# Parent 2b9336be5aa8ba21ea43e75b89406848732e6a82
+# User Rob Campbell <rcampbell@mozilla.com>
+Bug 862558 - Web Console should always be available / visible
+
+diff --git a/browser/devtools/framework/toolbox.js b/browser/devtools/framework/toolbox.js
+--- a/browser/devtools/framework/toolbox.js
++++ b/browser/devtools/framework/toolbox.js
+@@ -46,7 +46,7 @@ XPCOMUtils.defineLazyGetter(this, "Requi
+ /**
+  * A "Toolbox" is the component that holds all the tools for one specific
+  * target. Visually, it's a document that includes the tools tabs and all
+- * the iframes where the tool panels will be living in.
++ * the iframes where the tool panels reside.
+  *
+  * @param {object} target
+  *        The object the toolbox is debugging.
+@@ -306,9 +306,17 @@ Toolbox.prototype = {
+    * Add tabs to the toolbox UI for registered tools
+    */
+   _buildTabs: function TBOX_buildTabs() {
+-    for (let definition of gDevTools.getToolDefinitionArray()) {
++    let toolArray = gDevTools.getToolDefinitionArray().filter((def) => {
++      return def.id != "webconsole";
++    });
++
++    for (let definition of toolArray) {
+       this._buildTabForTool(definition);
+     }
++
++    // handle the Web Console differently.
++    let webConsoleDefinition = gDevTools.getToolDefinitionMap().get("webconsole");
++    this._buildWebConsole(webConsoleDefinition);
+   },
+ 
+   /**
+@@ -407,6 +415,35 @@ Toolbox.prototype = {
+   },
+ 
+   /**
++   * Build the WebConsole in a separate box. Because it's special.
++   * @param {string} consoleDefinition
++   *        the definition of the WebConsole tool.
++   */
++  _buildWebConsole: function TBOX_buildWebConsole(consoleDefinition) {
++    if (!consoleDefinition.isTargetSupported(this._target)) {
++      return;
++    }
++
++    let id = consoleDefinition.id;
++
++    let button = this.doc.getElementById("toolbox-tab-" + id);
++    button.setAttribute("toolid", id);
++    button.setAttribute("tooltiptext", consoleDefinition.tooltip);
++    button.setAttribute("image", consoleDefinition.icon);
++
++    let key = this.doc.getElementById("toolbox-options-key");
++    key.addEventListener("command", function(toolId) {
++      this.toggleWebConsole(toolId);
++    }.bind(this, id), true);
++
++    button.addEventListener("command", function () {
++      this.toggleWebConsole(id);
++    }.bind(this));
++
++    this.doc.getElementById("toolbox-keyset").appendChild(key);
++  },
++
++  /**
+    * Switch to the tool with the given id
+    *
+    * @param {string} id
+@@ -415,10 +452,12 @@ Toolbox.prototype = {
+   selectTool: function TBOX_selectTool(id) {
+     let deferred = Promise.defer();
+ 
+-    let selected = this.doc.querySelector(".devtools-tab[selected]");
+-    if (selected) {
+-      selected.removeAttribute("selected");
+-    }
++    let selected = this.doc.querySelectorAll(".devtools-tab[selected]");
++    Array.forEach(selected, (button) => {
++      if (button && button.getAttribute("toolid") != "webconsole") {
++        button.removeAttribute("selected");
++      }
++    });
+     let tab = this.doc.getElementById("toolbox-tab-" + id);
+     tab.setAttribute("selected", "true");
+ 
+@@ -516,6 +555,68 @@ Toolbox.prototype = {
+   },
+ 
+   /**
++   * Toggle the Web Console UI.
++   * XXX I hate these "toggle" methods. Should probably have an explicit
++   * show and hide pair.
++   */
++  toggleWebConsole: function TBOX_toggleWebConsole(id) {
++    let deferred = Promise.defer();
++    let panel = this.doc.getElementById("toolbox-panel-" + id);
++    let button = this.doc.getElementById("toolbox-tab-" + id);
++    let splitter = this.doc.getElementById("toolbox-console-splitter");
++    let definition = gDevTools.getToolDefinitionMap().get(id);
++    panel.hidden = !panel.hidden;
++    splitter.hidden = !splitter.hidden;
++    if (panel.hidden) {
++      button.removeAttribute("selected");
++    } else {
++      button.setAttribute("selected", "true");
++    }
++
++    let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
++    if (!iframe) {
++      iframe = this.doc.createElement("iframe");
++      iframe.className = "toolbox-panel-iframe";
++      iframe.id = "toolbox-panel-iframe-" + id;
++      iframe.setAttribute("flex", 1);
++      iframe.setAttribute("forceOwnRefreshDriver", "");
++      iframe.tooltip = "aHTMLTooltip";
++
++      let vbox = this.doc.getElementById("toolbox-panel-" + id);
++      vbox.appendChild(iframe);
++
++      let boundLoad = function() {
++        iframe.removeEventListener("DOMContentLoaded", boundLoad, true);
++
++        let built = definition.build(iframe.contentWindow, this);
++        Promise.resolve(built).then(function(panel) {
++          this._toolPanels.set(id, panel);
++
++          this.emit(id + "-ready", panel);
++          this.emit("select", id);
++          this.emit(id + "-selected", panel);
++          gDevTools.emit(id + "-ready", this, panel);
++
++          deferred.resolve(panel);
++        }.bind(this));
++      }.bind(this);
++
++      iframe.addEventListener("DOMContentLoaded", boundLoad, true);
++      iframe.setAttribute("src", definition.url);
++    } else {
++      let panel = this._toolPanels.get(id);
++      // only emit 'select' event if the iframe has been loaded
++      if (panel) {
++        this.emit("select", id);
++        this.emit(id + "-selected", panel);
++        deferred.resolve(panel);
++      }
++    }
++
++    return deferred.promise;
++  },
++
++  /**
+    * Raise the toolbox host.
+    */
+   raise: function TBOX_raise() {
+@@ -700,6 +801,8 @@ Toolbox.prototype = {
+ 
+     let outstanding = [];
+ 
++    this._toolPanels.delete("webconsole");
++    // let panels = this._toolPanels.filter((id) => { return id != "webconsole" });
+     for (let [id, panel] of this._toolPanels) {
+       outstanding.push(panel.destroy());
+     }
+diff --git a/browser/devtools/framework/toolbox.xul b/browser/devtools/framework/toolbox.xul
+--- a/browser/devtools/framework/toolbox.xul
++++ b/browser/devtools/framework/toolbox.xul
+@@ -34,8 +34,10 @@
+         <hbox id="toolbox-dock-buttons"/>
+       </hbox>
+ #endif
+-      <hbox id="toolbox-tabs" flex="1">
+-      </hbox>
++      <toolbarbutton id="toolbox-tab-webconsole"
++                     autocheck="false"
++                     class="command-button toolbox-tab devtools-tab"/>
++      <hbox id="toolbox-tabs" flex="1"/>
+       <hbox id="toolbox-buttons" pack="end"/>
+ #ifndef XP_MACOSX
+       <vbox id="toolbox-controls-separator"/>
+@@ -48,5 +50,9 @@
+     </toolbar>
+     <deck id="toolbox-deck" flex="1">
+     </deck>
++    <splitter id="toolbox-console-splitter" class="devtools-horizontal-splitter" collapse="before" hidden="true"/>
++     <hbox id="toolbox-panel-webconsole" flex="1" hidden="true">
++       <!-- <iframe id="toolbox-panel-iframe-webconsole" src="about:blank"/> -->
++     </hbox>
+   </notificationbox>
+ </window>

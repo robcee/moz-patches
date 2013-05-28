@@ -1,0 +1,716 @@
+# vim: se ft=diff :
+# HG changeset patch
+# User Eddy Bruel <ejpbruel>
+# Date 2013-05-14 14:49
+Bug %(bugnum)s - "%(title)s" [%(flags)s]
+
+diff -r c80dc6ffe865 js/src/frontend/BytecodeCompiler.cpp
+--- a/js/src/frontend/BytecodeCompiler.cpp	Mon May 13 09:15:11 2013 -0700
++++ b/js/src/frontend/BytecodeCompiler.cpp	Tue May 14 14:50:07 2013 -0700
+@@ -91,17 +91,17 @@ frontend::CompileScript(JSContext *cx, H
+      */
+     JS_ASSERT_IF(evalCaller, options.compileAndGo);
+     JS_ASSERT_IF(evalCaller, options.forEval);
+     JS_ASSERT_IF(staticLevel != 0, evalCaller);
+ 
+     if (!CheckLength(cx, length))
+         return NULL;
+     JS_ASSERT_IF(staticLevel != 0, options.sourcePolicy != CompileOptions::LAZY_SOURCE);
+-    ScriptSource *ss = cx->new_<ScriptSource>();
++    ScriptSource *ss = cx->new_<ScriptSource>(cx->compartment);
+     if (!ss)
+         return NULL;
+     if (options.filename && !ss->setFilename(cx, options.filename))
+         return NULL;
+     ScriptSourceHolder ssh(ss);
+     SourceCompressionToken mysct(cx);
+     SourceCompressionToken *sct = (extraSct) ? extraSct : &mysct;
+     switch (options.sourcePolicy) {
+@@ -313,17 +313,17 @@ frontend::ParseScript(JSContext *cx, Han
+ // handler attribute in an HTML <INPUT> tag, or in a Function() constructor.
+ bool
+ frontend::CompileFunctionBody(JSContext *cx, MutableHandleFunction fun, CompileOptions options,
+                               const AutoNameVector &formals, const jschar *chars, size_t length,
+                               bool isAsmJSRecompile)
+ {
+     if (!CheckLength(cx, length))
+         return false;
+-    ScriptSource *ss = cx->new_<ScriptSource>();
++    ScriptSource *ss = cx->new_<ScriptSource>(cx->compartment);
+     if (!ss)
+         return false;
+     if (options.filename && !ss->setFilename(cx, options.filename))
+         return false;
+     ScriptSourceHolder ssh(ss);
+     SourceCompressionToken sct(cx);
+     JS_ASSERT(options.sourcePolicy != CompileOptions::LAZY_SOURCE);
+     if (options.sourcePolicy == CompileOptions::SAVE_SOURCE) {
+diff -r c80dc6ffe865 js/src/jit-test/tests/debug/Script-source-01.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/js/src/jit-test/tests/debug/Script-source-01.js	Tue May 14 14:50:07 2013 -0700
+@@ -0,0 +1,18 @@
++// Script.prototype.source should be an object
++
++let g = newGlobal('new-compartment');
++let dbg = new Debugger;
++
++dbg.onNewScript = function (script) {
++    var source = script.source;
++    assertEq(typeof source, "object");
++    script.getChildScripts().forEach(function (script) {
++        assertEq(script.source, source);
++    });
++}
++
++g.eval("2 * 3");
++g.eval("function f() {}");
++g.eval("function f() { function g() {} }");
++g.eval("eval('2 * 3')");
++g.eval("new Function('2 * 3')");
+diff -r c80dc6ffe865 js/src/jit-test/tests/debug/Script-source-02.js
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ b/js/src/jit-test/tests/debug/Script-source-02.js	Tue May 14 14:50:07 2013 -0700
+@@ -0,0 +1,14 @@
++// Script.prototype.source should be an object
++
++let g = newGlobal('new-compartment');
++let dbg = new Debugger;
++let gw = dbg.addDebuggee(g);
++
++dbg.onDebuggerStatement = function (frame) {
++    var source1 = frame.script.source;
++    var source2 = gw.makeDebuggeeValue(g.f).script.source;
++    assertEq(typeof source1, "object");
++    assertEq(typeof source2, "object");
++    assertEq(source1, source2);
++}
++g.eval("function f() {}; debugger;");
+diff -r c80dc6ffe865 js/src/jsscript.cpp
+--- a/js/src/jsscript.cpp	Mon May 13 09:15:11 2013 -0700
++++ b/js/src/jsscript.cpp	Tue May 14 14:50:07 2013 -0700
+@@ -532,17 +532,17 @@ js::XDRScript(XDRState<mode> *xdr, Handl
+         // principals and originPrincipals are set with xdr->initScriptPrincipals(script) below.
+         // staticLevel is set below.
+         CompileOptions options(cx);
+         options.setVersion(version_)
+                .setNoScriptRval(!!(scriptBits & (1 << NoScriptRval)))
+                .setSelfHostingMode(!!(scriptBits & (1 << SelfHosted)));
+         ScriptSource *ss;
+         if (scriptBits & (1 << OwnSource)) {
+-            ss = cx->new_<ScriptSource>();
++            ss = cx->new_<ScriptSource>(script->compartment());
+             if (!ss)
+                 return false;
+         } else {
+             JS_ASSERT(enclosingScript);
+             ss = enclosingScript->scriptSource();
+         }
+         ScriptSourceHolder ssh(ss);
+         script = JSScript::Create(cx, enclosingScope, !!(scriptBits & (1 << SavedCallerFun)),
+@@ -1286,16 +1286,22 @@ SourceCompressionToken::abort()
+ {
+     JS_ASSERT(active());
+ #ifdef JS_THREADSAFE
+     cx->runtime->sourceCompressorThread.abort(this);
+ #endif
+ }
+ 
+ void
++ScriptSource::detach()
++{
++    Debugger::onDetachSource(this);
++}
++
++void
+ ScriptSource::destroy()
+ {
+     JS_ASSERT(ready());
+     adjustDataSize(0);
+     js_free(filename_);
+     js_free(sourceMap_);
+     ready_ = false;
+     js_free(this);
+diff -r c80dc6ffe865 js/src/jsscript.h
+--- a/js/src/jsscript.h	Mon May 13 09:15:11 2013 -0700
++++ b/js/src/jsscript.h	Tue May 14 14:50:07 2013 -0700
+@@ -1097,46 +1097,77 @@ struct ScriptSource
+         // otherwise, source holds the uncompressed source. There is a special
+         // pointer |emptySource| for source code for length 0.
+         //
+         // The only function allowed to malloc, realloc, or free the pointers in
+         // this union is adjustDataSize(). Don't do it elsewhere.
+         jschar *source;
+         unsigned char *compressed;
+     } data;
+-    uint32_t refs;
++    JSContext *cx_;
++    JSCompartment *compartment_;
++    uint32_t refs_;
++    uint32_t dbgrefs_;
+     uint32_t length_;
+     uint32_t compressedLength_;
+     char *filename_;
+     jschar *sourceMap_;
+ 
+     // True if we can call JSRuntime::sourceHook to load the source on
+     // demand. If sourceRetrievable_ and hasSourceData() are false, it is not
+     // possible to get source at all.
+     bool sourceRetrievable_:1;
+     bool argumentsNotIncluded_:1;
+     bool ready_:1;
+ 
+   public:
+-    ScriptSource()
+-      : refs(0),
++    ScriptSource(JSCompartment *compartment)
++      : compartment_(compartment),
++        refs_(0),
++        dbgrefs_(0),
+         length_(0),
+         compressedLength_(0),
+         filename_(NULL),
+         sourceMap_(NULL),
+         sourceRetrievable_(false),
+         argumentsNotIncluded_(false),
+         ready_(true)
+     {
+         data.source = NULL;
+     }
+-    void incref() { refs++; }
++
++    JSCompartment *compartment() { return compartment_; }
++
++    /* The debugger maintains a map of strong references from instances of
++     * ScriptSource to instances of Debugger.Source. Since each instance of
++     * Debugger.Source also maintains a strong reference to its corresponding
++     * ScriptSource, this constitutes a cycle. And since instances of
++     * ScriptSource are reference counted, this cycle is not detectable by the GC.
++     *
++     * To break this cycle, we remove the entry for an instance of ScriptSource
++     * from the map when it is no longer reachable from anywhere but instances
++     * of Debugger.Source. This is safe because we no longer need these entries
++     * to find the corresponding instances of Debugger.source in that case.
++     * 
++     * To detect whether it is safe to remove entries from the map, we count
++     * references from the debugger separately from references from elsewhere.
++     */
++    void incref() { refs_++; }
+     void decref() {
+-        JS_ASSERT(refs != 0);
+-        if (--refs == 0)
++        JS_ASSERT(refs_ != 0);
++        if (--refs_ == 0) {
++            detach();
++            if (dbgrefs_ == 0)
++                destroy();
++        }
++    }
++    void incdbgref() { dbgrefs_++; }
++    void decdbgref() {
++        JS_ASSERT(dbgrefs_ != 0);
++        if (--dbgrefs_ == 0 && refs_ == 0)
+             destroy();
+     }
+     bool setSourceCopy(JSContext *cx,
+                        const jschar *src,
+                        uint32_t length,
+                        bool argumentsNotIncluded,
+                        SourceCompressionToken *tok);
+     void setSource(const jschar *src, uint32_t length);
+@@ -1165,16 +1196,17 @@ struct ScriptSource
+     }
+ 
+     // Source maps
+     bool setSourceMap(JSContext *cx, jschar *sourceMapURL, const char *filename);
+     const jschar *sourceMap();
+     bool hasSourceMap() const { return sourceMap_ != NULL; }
+ 
+   private:
++    void detach();
+     void destroy();
+     bool compressed() const { return compressedLength_ != 0; }
+     size_t computedSizeOfData() const {
+         return compressed() ? compressedLength_ : sizeof(jschar) * length_;
+     }
+     bool adjustDataSize(size_t nbytes);
+ };
+ 
+diff -r c80dc6ffe865 js/src/vm/Debugger.cpp
+--- a/js/src/vm/Debugger.cpp	Mon May 13 09:15:11 2013 -0700
++++ b/js/src/vm/Debugger.cpp	Tue May 14 14:50:07 2013 -0700
+@@ -70,16 +70,23 @@ enum {
+ 
+ extern Class DebuggerScript_class;
+ 
+ enum {
+     JSSLOT_DEBUGSCRIPT_OWNER,
+     JSSLOT_DEBUGSCRIPT_COUNT
+ };
+ 
++extern Class DebuggerSource_class;
++
++enum {
++    JSSLOT_DEBUGSOURCE_OWNER,
++    JSSLOT_DEBUGSOURCE_COUNT
++};
++
+ 
+ /*** Utils ***************************************************************************************/
+ 
+ bool
+ ReportMoreArgsNeeded(JSContext *cx, const char *name, unsigned required)
+ {
+     JS_ASSERT(required > 0);
+     JS_ASSERT(required <= 10);
+@@ -363,17 +370,17 @@ Breakpoint::nextInSite()
+     JSCList *link = JS_NEXT_LINK(&siteLinks);
+     return (link == &site->breakpoints) ? NULL : fromSiteLinks(link);
+ }
+ 
+ /*** Debugger hook dispatch **********************************************************************/
+ 
+ Debugger::Debugger(JSContext *cx, JSObject *dbg)
+   : object(dbg), uncaughtExceptionHook(NULL), enabled(true),
+-    frames(cx), scripts(cx), objects(cx), environments(cx)
++    frames(cx), scripts(cx), sources(cx), objects(cx), environments(cx)
+ {
+     assertSameCompartment(cx, dbg);
+ 
+     cx->runtime->debuggerList.insertBack(this);
+     JS_INIT_CLIST(&breakpoints);
+     JS_INIT_CLIST(&onNewGlobalObjectWatchersLink);
+ }
+ 
+@@ -392,32 +399,34 @@ Debugger::~Debugger()
+ }
+ 
+ bool
+ Debugger::init(JSContext *cx)
+ {
+     bool ok = debuggees.init() &&
+               frames.init() &&
+               scripts.init() &&
++              sources.init() &&
+               objects.init() &&
+               environments.init();
+     if (!ok)
+         js_ReportOutOfMemory(cx);
+     return ok;
+ }
+ 
+ JS_STATIC_ASSERT(unsigned(JSSLOT_DEBUGFRAME_OWNER) == unsigned(JSSLOT_DEBUGSCRIPT_OWNER));
+ JS_STATIC_ASSERT(unsigned(JSSLOT_DEBUGFRAME_OWNER) == unsigned(JSSLOT_DEBUGOBJECT_OWNER));
+ JS_STATIC_ASSERT(unsigned(JSSLOT_DEBUGFRAME_OWNER) == unsigned(JSSLOT_DEBUGENV_OWNER));
+ 
+ Debugger *
+ Debugger::fromChildJSObject(JSObject *obj)
+ {
+     JS_ASSERT(obj->getClass() == &DebuggerFrame_class ||
+               obj->getClass() == &DebuggerScript_class ||
++              obj->getClass() == &DebuggerSource_class ||
+               obj->getClass() == &DebuggerObject_class ||
+               obj->getClass() == &DebuggerEnv_class);
+     JSObject *dbgobj = &obj->getReservedSlot(JSSLOT_DEBUGOBJECT_OWNER).toObject();
+     return fromJSObject(dbgobj);
+ }
+ 
+ bool
+ Debugger::getScriptFrame(JSContext *cx, const ScriptFrameIter &iter, MutableHandleValue vp)
+@@ -1114,16 +1123,27 @@ Debugger::slowPathOnNewScript(JSContext 
+         Debugger *dbg = Debugger::fromJSObject(&p->toObject());
+         if ((!compileAndGoGlobal || dbg->debuggees.has(compileAndGoGlobal)) &&
+             dbg->enabled && dbg->getHook(OnNewScript)) {
+             dbg->fireNewScript(cx, script);
+         }
+     }
+ }
+ 
++void
++Debugger::slowPathOnDetachSource(ScriptSource *source)
++{
++    GlobalObjectSet &debuggees = source->compartment()->getDebuggees();
++    for (GlobalObjectSet::Range r = debuggees.all(); !r.empty(); r.popFront()) {
++        GlobalObject::DebuggerVector *debuggers = r.front()->getDebuggers();
++        for (Debugger **p = debuggers->begin(); p != debuggers->end(); p++) 
++            (*p)->sources.remove(source);
++    }
++}
++
+ JSTrapStatus
+ Debugger::onTrap(JSContext *cx, MutableHandleValue vp)
+ {
+     ScriptFrameIter iter(cx);
+     RootedScript script(cx, iter.script());
+     Rooted<GlobalObject*> scriptGlobal(cx, &script->global());
+     jsbytecode *pc = iter.pc();
+     BreakpointSite *site = script->getBreakpointSite(pc);
+@@ -2820,16 +2840,30 @@ DebuggerScript_getLineCount(JSContext *c
+     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get lineCount)", args, obj, script);
+ 
+     unsigned maxLine = js_GetScriptLineExtent(script);
+     args.rval().setNumber(double(maxLine));
+     return true;
+ }
+ 
+ static JSBool
++DebuggerScript_getSource(JSContext *cx, unsigned argc, Value *vp)
++{
++    THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get source)", args, obj, script);
++    Debugger *dbg = Debugger::fromChildJSObject(obj);
++
++    RootedObject sourceObject(cx, dbg->wrapSource(cx, script->scriptSource()));
++    if (!sourceObject)
++        return false;
++
++    args.rval().setObject(*sourceObject);
++    return true;
++}
++
++static JSBool
+ DebuggerScript_getStaticLevel(JSContext *cx, unsigned argc, Value *vp)
+ {
+     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get staticLevel)", args, obj, script);
+     args.rval().setNumber(uint32_t(script->staticLevel));
+     return true;
+ }
+ 
+ static JSBool
+@@ -3455,16 +3489,17 @@ DebuggerScript_construct(JSContext *cx, 
+     JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_NO_CONSTRUCTOR, "Debugger.Script");
+     return false;
+ }
+ 
+ static const JSPropertySpec DebuggerScript_properties[] = {
+     JS_PSG("url", DebuggerScript_getUrl, 0),
+     JS_PSG("startLine", DebuggerScript_getStartLine, 0),
+     JS_PSG("lineCount", DebuggerScript_getLineCount, 0),
++    JS_PSG("source", DebuggerScript_getSource, 0),
+     JS_PSG("staticLevel", DebuggerScript_getStaticLevel, 0),
+     JS_PSG("sourceMapURL", DebuggerScript_getSourceMapUrl, 0),
+     JS_PS_END
+ };
+ 
+ static const JSFunctionSpec DebuggerScript_methods[] = {
+     JS_FN("getChildScripts", DebuggerScript_getChildScripts, 0, 0),
+     JS_FN("getAllOffsets", DebuggerScript_getAllOffsets, 0, 0),
+@@ -3474,16 +3509,94 @@ static const JSFunctionSpec DebuggerScri
+     JS_FN("setBreakpoint", DebuggerScript_setBreakpoint, 2, 0),
+     JS_FN("getBreakpoints", DebuggerScript_getBreakpoints, 1, 0),
+     JS_FN("clearBreakpoint", DebuggerScript_clearBreakpoint, 1, 0),
+     JS_FN("clearAllBreakpoints", DebuggerScript_clearAllBreakpoints, 0, 0),
+     JS_FS_END
+ };
+ 
+ 
++/*** Debugger.Source *****************************************************************************/
++
++static inline ScriptSource *
++GetSourceReferent(JSObject *obj)
++{
++    JS_ASSERT(obj->getClass() == &DebuggerSource_class);
++    return static_cast<ScriptSource *>(obj->getPrivate());
++}
++
++static void
++DebuggerSource_finalize(FreeOp *fop, JSObject *obj)
++{
++    /* We need an explicit NULL check here because both instances and the
++     * prototype of Debugger.Source share the same class. This means the
++     * finalize trap will be called for the prototype, which private field
++     * contains NULL, rather than a pointer to a particular script source.
++     */
++    ScriptSource *source = GetSourceReferent(obj);
++    if (source)
++        source->decdbgref();
++}
++
++Class DebuggerSource_class = {
++    "Source", JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(JSSLOT_DEBUGSOURCE_COUNT),
++    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
++    JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, DebuggerSource_finalize
++};
++
++static JSBool
++DebuggerSource_construct(JSContext *cx, unsigned argc, Value *vp)
++{
++    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_NO_CONSTRUCTOR, "Debugger.Source");
++    return false;
++}
++
++JSObject *
++Debugger::newDebuggerSource(JSContext *cx, ScriptSource *source)
++{
++    JSObject *proto = &object->getReservedSlot(JSSLOT_DEBUG_SOURCE_PROTO).toObject();
++    JS_ASSERT(proto);
++    JSObject *sourceobj = NewObjectWithGivenProto(cx, &DebuggerSource_class, proto, NULL);
++    if (!sourceobj)
++        return NULL;
++    sourceobj->setReservedSlot(JSSLOT_DEBUGSOURCE_OWNER, ObjectValue(*object));
++    sourceobj->setPrivate(source);
++    source->incdbgref();
++
++    return sourceobj;
++}
++
++JSObject *
++Debugger::wrapSource(JSContext *cx, ScriptSource *source)
++{
++    SourceMap::AddPtr p = sources.lookupForAdd(source);
++    if (!p) {
++        /* Create and populate the Debugger.Source object. */
++        JSObject *sourceobj = newDebuggerSource(cx, source);
++        if (!sourceobj)
++            return NULL;
++
++        if (!sources.add(p, source, sourceobj)) {
++            js_ReportOutOfMemory(cx);
++            return NULL;
++        }
++    }
++
++    JS_ASSERT(GetSourceReferent(p->value) == source);
++    return p->value;
++}
++
++static const JSPropertySpec DebuggerSource_properties[] = {
++    JS_PS_END
++};
++
++static const JSFunctionSpec DebuggerSource_methods[] = {
++    JS_FS_END
++};
++
+ /*** Debugger.Frame ******************************************************************************/
+ 
+ static void
+ DebuggerFrame_freeScriptFrameIterData(FreeOp *fop, JSObject *obj)
+ {
+     fop->delete_((ScriptFrameIter::Data *)obj->getPrivate());
+     obj->setPrivate(NULL);
+ }
+@@ -5194,16 +5307,17 @@ JS_DefineDebuggerObject(JSContext *cx, J
+     RootedObject obj(cx, obj_);
+ 
+     RootedObject
+         objProto(cx),
+         debugCtor(cx),
+         debugProto(cx),
+         frameProto(cx),
+         scriptProto(cx),
++        sourceProto(cx),
+         objectProto(cx),
+         envProto(cx);
+ 
+     objProto = obj->asGlobal().getOrCreateObjectPrototype(cx);
+     if (!objProto)
+         return false;
+ 
+ 
+@@ -5223,16 +5337,23 @@ JS_DefineDebuggerObject(JSContext *cx, J
+ 
+     scriptProto = js_InitClass(cx, debugCtor, objProto, &DebuggerScript_class,
+                                DebuggerScript_construct, 0,
+                                DebuggerScript_properties, DebuggerScript_methods,
+                                NULL, NULL);
+     if (!scriptProto)
+         return false;
+ 
++    sourceProto = js_InitClass(cx, debugCtor, objProto, &DebuggerSource_class,
++                               DebuggerSource_construct, 0,
++                               DebuggerSource_properties, DebuggerSource_methods,
++                               NULL, NULL);
++    if (!sourceProto)
++        return false;
++
+     objectProto = js_InitClass(cx, debugCtor, objProto, &DebuggerObject_class,
+                                DebuggerObject_construct, 0,
+                                DebuggerObject_properties, DebuggerObject_methods,
+                                NULL, NULL);
+     if (!objectProto)
+         return false;
+ 
+     envProto = js_InitClass(cx, debugCtor, objProto, &DebuggerEnv_class,
+@@ -5240,11 +5361,12 @@ JS_DefineDebuggerObject(JSContext *cx, J
+                                       DebuggerEnv_properties, DebuggerEnv_methods,
+                                       NULL, NULL);
+     if (!envProto)
+         return false;
+ 
+     debugProto->setReservedSlot(Debugger::JSSLOT_DEBUG_FRAME_PROTO, ObjectValue(*frameProto));
+     debugProto->setReservedSlot(Debugger::JSSLOT_DEBUG_OBJECT_PROTO, ObjectValue(*objectProto));
+     debugProto->setReservedSlot(Debugger::JSSLOT_DEBUG_SCRIPT_PROTO, ObjectValue(*scriptProto));
++    debugProto->setReservedSlot(Debugger::JSSLOT_DEBUG_SOURCE_PROTO, ObjectValue(*sourceProto));
+     debugProto->setReservedSlot(Debugger::JSSLOT_DEBUG_ENV_PROTO, ObjectValue(*envProto));
+     return true;
+ }
+diff -r c80dc6ffe865 js/src/vm/Debugger.h
+--- a/js/src/vm/Debugger.h	Mon May 13 09:15:11 2013 -0700
++++ b/js/src/vm/Debugger.h	Tue May 14 14:50:07 2013 -0700
+@@ -167,16 +167,17 @@ class Debugger : private mozilla::Linked
+     };
+ 
+     enum {
+         JSSLOT_DEBUG_PROTO_START,
+         JSSLOT_DEBUG_FRAME_PROTO = JSSLOT_DEBUG_PROTO_START,
+         JSSLOT_DEBUG_ENV_PROTO,
+         JSSLOT_DEBUG_OBJECT_PROTO,
+         JSSLOT_DEBUG_SCRIPT_PROTO,
++        JSSLOT_DEBUG_SOURCE_PROTO,
+         JSSLOT_DEBUG_PROTO_STOP,
+         JSSLOT_DEBUG_HOOK_START = JSSLOT_DEBUG_PROTO_STOP,
+         JSSLOT_DEBUG_HOOK_STOP = JSSLOT_DEBUG_HOOK_START + HookCount,
+         JSSLOT_DEBUG_COUNT = JSSLOT_DEBUG_HOOK_STOP
+     };
+ 
+   private:
+     HeapPtrObject object;               /* The Debugger object. Strong reference. */
+@@ -211,16 +212,22 @@ class Debugger : private mozilla::Linked
+                     DefaultHasher<AbstractFramePtr>,
+                     RuntimeAllocPolicy> FrameMap;
+     FrameMap frames;
+ 
+     /* An ephemeral map from JSScript* to Debugger.Script instances. */
+     typedef DebuggerWeakMap<EncapsulatedPtrScript, RelocatablePtrObject> ScriptWeakMap;
+     ScriptWeakMap scripts;
+ 
++    typedef HashMap<ScriptSource *,
++                    RelocatablePtrObject,
++                    DefaultHasher<ScriptSource *>,
++                    RuntimeAllocPolicy> SourceMap;
++    SourceMap sources;
++
+     /* The map from debuggee objects to their Debugger.Object instances. */
+     typedef DebuggerWeakMap<EncapsulatedPtrObject, RelocatablePtrObject> ObjectWeakMap;
+     ObjectWeakMap objects;
+ 
+     /* The map from debuggee Envs to Debugger.Environment instances. */
+     ObjectWeakMap environments;
+ 
+     class FrameRange;
+@@ -329,31 +336,38 @@ class Debugger : private mozilla::Linked
+     JSObject *getHook(Hook hook) const;
+     bool hasAnyLiveHooks() const;
+ 
+     static JSTrapStatus slowPathOnEnterFrame(JSContext *cx, AbstractFramePtr frame,
+                                              MutableHandleValue vp);
+     static bool slowPathOnLeaveFrame(JSContext *cx, AbstractFramePtr frame, bool ok);
+     static void slowPathOnNewScript(JSContext *cx, HandleScript script,
+                                     GlobalObject *compileAndGoGlobal);
++    static void slowPathOnDetachSource(ScriptSource *source);
+     static bool slowPathOnNewGlobalObject(JSContext *cx, Handle<GlobalObject *> global);
+     static JSTrapStatus dispatchHook(JSContext *cx, MutableHandleValue vp, Hook which);
+ 
+     JSTrapStatus fireDebuggerStatement(JSContext *cx, MutableHandleValue vp);
+     JSTrapStatus fireExceptionUnwind(JSContext *cx, MutableHandleValue vp);
+     JSTrapStatus fireEnterFrame(JSContext *cx, MutableHandleValue vp);
+     JSTrapStatus fireNewGlobalObject(JSContext *cx, Handle<GlobalObject *> global, MutableHandleValue vp);
+ 
+     /*
+      * Allocate and initialize a Debugger.Script instance whose referent is
+      * |script|.
+      */
+     JSObject *newDebuggerScript(JSContext *cx, HandleScript script);
+ 
+     /*
++     * Allocate and initialize a Debugger.Sourcei instance whose referent is
++     * |source|.
++     */
++    JSObject *newDebuggerSource(JSContext *cx, ScriptSource *source);
++
++    /*
+      * Receive a "new script" event from the engine. A new script was compiled
+      * or deserialized.
+      */
+     void fireNewScript(JSContext *cx, HandleScript script);
+ 
+     inline Breakpoint *firstBreakpoint() const;
+ 
+     static inline Debugger *fromOnNewGlobalObjectWatchersLink(JSCList *link);
+@@ -396,16 +410,17 @@ class Debugger : private mozilla::Linked
+ 
+     static inline JSTrapStatus onEnterFrame(JSContext *cx, AbstractFramePtr frame,
+                                             MutableHandleValue vp);
+     static inline bool onLeaveFrame(JSContext *cx, AbstractFramePtr frame, bool ok);
+     static inline JSTrapStatus onDebuggerStatement(JSContext *cx, MutableHandleValue vp);
+     static inline JSTrapStatus onExceptionUnwind(JSContext *cx, MutableHandleValue vp);
+     static inline void onNewScript(JSContext *cx, HandleScript script,
+                                    GlobalObject *compileAndGoGlobal);
++    static inline void onDetachSource(ScriptSource *source);
+     static inline bool onNewGlobalObject(JSContext *cx, Handle<GlobalObject *> global);
+     static JSTrapStatus onTrap(JSContext *cx, MutableHandleValue vp);
+     static JSTrapStatus onSingleStep(JSContext *cx, MutableHandleValue vp);
+     static bool handleBaselineOsr(JSContext *cx, StackFrame *from, ion::BaselineFrame *to);
+ 
+     /************************************* Functions for use by Debugger.cpp. */
+ 
+     inline bool observesEnterFrame() const;
+@@ -500,16 +515,22 @@ class Debugger : private mozilla::Linked
+ 
+     /*
+      * Return the Debugger.Script object for |script|, or create a new one if
+      * needed. The context |cx| must be in the debugger compartment; |script|
+      * must be a script in a debuggee compartment.
+      */
+     JSObject *wrapScript(JSContext *cx, HandleScript script);
+ 
++    /*
++     * Return the Debugger.Source object for |source|, or create a new one if
++     * needed.
++     */
++    JSObject *wrapSource(JSContext *cx, ScriptSource *source);
++
+   private:
+     Debugger(const Debugger &) MOZ_DELETE;
+     Debugger & operator=(const Debugger &) MOZ_DELETE;
+ };
+ 
+ class BreakpointSite {
+     friend class Breakpoint;
+     friend struct ::JSCompartment;
+@@ -687,16 +708,23 @@ void
+ Debugger::onNewScript(JSContext *cx, HandleScript script, GlobalObject *compileAndGoGlobal)
+ {
+     JS_ASSERT_IF(script->compileAndGo, compileAndGoGlobal);
+     JS_ASSERT_IF(!script->compileAndGo, !compileAndGoGlobal);
+     if (!script->compartment()->getDebuggees().empty())
+         slowPathOnNewScript(cx, script, compileAndGoGlobal);
+ }
+ 
++void
++Debugger::onDetachSource(ScriptSource *source)
++{
++    if (!source->compartment()->getDebuggees().empty())
++        slowPathOnDetachSource(source);
++}
++
+ bool
+ Debugger::onNewGlobalObject(JSContext *cx, Handle<GlobalObject *> global)
+ {
+     if (JS_CLIST_IS_EMPTY(&cx->runtime->onNewGlobalObjectWatchers))
+         return true;
+     return Debugger::slowPathOnNewGlobalObject(cx, global);
+ }
+ 
+diff -r c80dc6ffe865 js/src/vm/GlobalObject.cpp
+--- a/js/src/vm/GlobalObject.cpp	Mon May 13 09:15:11 2013 -0700
++++ b/js/src/vm/GlobalObject.cpp	Tue May 14 14:50:07 2013 -0700
+@@ -224,17 +224,17 @@ GlobalObject::initFunctionAndObjectClass
+             functionProto->setIsFunctionPrototype();
+         }
+ 
+         const char *rawSource = "() {\n}";
+         size_t sourceLen = strlen(rawSource);
+         jschar *source = InflateString(cx, rawSource, &sourceLen);
+         if (!source)
+             return NULL;
+-        ScriptSource *ss = cx->new_<ScriptSource>();
++        ScriptSource *ss = cx->new_<ScriptSource>(cx->compartment);
+         if (!ss) {
+             js_free(source);
+             return NULL;
+         }
+         ScriptSourceHolder ssh(ss);
+         ss->setSource(source, sourceLen);
+ 
+         CompileOptions options(cx);
+
