@@ -1,15 +1,15 @@
 # HG changeset patch
-# Parent 36cd40523c3a158c9acc400cd3a1b5e7f750d91f
+# Parent cfcce7c5eb74d5603d992ce2932693e6729fe519
 # User Rob Campbell <rcampbell@mozilla.com>
 Bug 871630 - Add the collapse/expand button to the Console toolbar to show/hide the VariablesView
 
 diff --git a/browser/devtools/webconsole/test/Makefile.in b/browser/devtools/webconsole/test/Makefile.in
 --- a/browser/devtools/webconsole/test/Makefile.in
 +++ b/browser/devtools/webconsole/test/Makefile.in
-@@ -129,6 +129,7 @@ MOCHITEST_BROWSER_FILES = \
- 	browser_bug_869003_inspect_cross_domain_object.js \
- 	browser_bug_862916_console_dir_and_filter_off.js \
- 	browser_console_native_getters.js \
+@@ -132,6 +132,7 @@ MOCHITEST_BROWSER_FILES = \
+ 	browser_bug_871156_ctrlw_close_tab.js \
+ 	browser_console_private_browsing.js \
+ 	browser_console_nsiconsolemessage.js \
 +	browser_bug_871630_variable_view_close_on_button.js \
  	head.js \
  	$(NULL)
@@ -124,17 +124,17 @@ diff --git a/browser/devtools/webconsole/webconsole.js b/browser/devtools/webcon
 diff --git a/browser/devtools/webconsole/webconsole.xul b/browser/devtools/webconsole/webconsole.xul
 --- a/browser/devtools/webconsole/webconsole.xul
 +++ b/browser/devtools/webconsole/webconsole.xul
-@@ -134,6 +134,10 @@
-                  placeholder="&filterOutput.placeholder;"/>
+@@ -130,6 +130,10 @@
+ 
          <toolbarbutton class="webconsole-clear-console-button devtools-toolbarbutton"
                         label="&btnClear.label;" tooltiptext="&btnClear.tooltip;"/>
 +        <toolbarbutton id="instruments-pane-toggle"
 +                       class="devtools-toolbarbutton"
 +                       tooltiptext="&collapseSidebar.label;"
 +                       tabindex="0"/>
-       </toolbar>
  
-       <richlistbox class="hud-output-node" orient="vertical" flex="1"
+         <spacer flex="1"/>
+ 
 diff --git a/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd b/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd
 --- a/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd
 +++ b/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd
@@ -147,11 +147,10 @@ diff --git a/browser/locales/en-US/chrome/browser/devtools/webConsole.dtd b/brow
 diff --git a/browser/themes/linux/devtools/webconsole.css b/browser/themes/linux/devtools/webconsole.css
 --- a/browser/themes/linux/devtools/webconsole.css
 +++ b/browser/themes/linux/devtools/webconsole.css
-@@ -256,3 +256,20 @@
-   background-image: linear-gradient(#FF3030, #FF7D7D);
+@@ -259,6 +259,23 @@
    border-color: #D12C2C;
  }
-+
+ 
 +#instruments-pane-toggle {
 +  background: none;
 +  box-shadow: none;
@@ -168,14 +167,17 @@ diff --git a/browser/themes/linux/devtools/webconsole.css b/browser/themes/linux
 +  -moz-image-region: rect(0px,32px,16px,16px);
 +}
 +
++
+ .webconsole-msg-security.webconsole-msg-error {
+   -moz-image-region: rect(32px, 16px, 40px, 8px);
+ }
 diff --git a/browser/themes/osx/devtools/webconsole.css b/browser/themes/osx/devtools/webconsole.css
 --- a/browser/themes/osx/devtools/webconsole.css
 +++ b/browser/themes/osx/devtools/webconsole.css
-@@ -260,3 +260,19 @@
-   background-image: linear-gradient(#FF3030, #FF7D7D);
+@@ -263,6 +263,22 @@
    border-color: #D12C2C;
  }
-+
+ 
 +#instruments-pane-toggle {
 +  background: none;
 +  box-shadow: none;
@@ -191,14 +193,17 @@ diff --git a/browser/themes/osx/devtools/webconsole.css b/browser/themes/osx/dev
 +#instruments-pane-toggle:active {
 +  -moz-image-region: rect(0px,32px,16px,16px);
 +}
++
+ .webconsole-msg-security.webconsole-msg-error {
+   -moz-image-region: rect(32px, 16px, 40px, 8px);
+ }
 diff --git a/browser/themes/windows/devtools/webconsole.css b/browser/themes/windows/devtools/webconsole.css
 --- a/browser/themes/windows/devtools/webconsole.css
 +++ b/browser/themes/windows/devtools/webconsole.css
-@@ -265,3 +265,20 @@
-   background-image: linear-gradient(#FF3030, #FF7D7D);
+@@ -268,6 +268,23 @@
    border-color: #D12C2C;
  }
-+
+ 
 +#instruments-pane-toggle {
 +  background: none;
 +  box-shadow: none;
@@ -215,3 +220,7 @@ diff --git a/browser/themes/windows/devtools/webconsole.css b/browser/themes/win
 +  -moz-image-region: rect(0px,32px,16px,16px);
 +}
 +
++
+ .webconsole-msg-security.webconsole-msg-error {
+   -moz-image-region: rect(32px, 16px, 40px, 8px);
+ }

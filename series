@@ -1,9 +1,9 @@
-patch
-debug-scratchpad
 instrument-butten
-toggle-butten
 console-panel
 console-link
+patch
+debug-scratchpad
+toggle-butten
 dbg-chrome
 toolbar
 scratchdebug.patch
