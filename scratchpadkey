@@ -1,0 +1,28 @@
+# HG changeset patch
+# Parent 8b8102fdb5fd2b1a693ee550dadd17515c66450a
+# User Rob Campbell <rcampbell@mozilla.com>
+Bug 877331 - Cmd/Ctrl-shift-J opens Error Console, not Browser Console
+
+diff --git a/browser/devtools/scratchpad/scratchpad.js b/browser/devtools/scratchpad/scratchpad.js
+--- a/browser/devtools/scratchpad/scratchpad.js
++++ b/browser/devtools/scratchpad/scratchpad.js
+@@ -1066,7 +1066,7 @@ var Scratchpad = {
+    */
+   openErrorConsole: function SP_openErrorConsole()
+   {
+-    this.browserWindow.toJavaScriptConsole();
++    this.browserWindow.HUDConsoleUI.toggleBrowserConsole();
+   },
+ 
+   /**
+diff --git a/browser/devtools/scratchpad/test/Makefile.in b/browser/devtools/scratchpad/test/Makefile.in
+--- a/browser/devtools/scratchpad/test/Makefile.in
++++ b/browser/devtools/scratchpad/test/Makefile.in
+@@ -36,6 +36,7 @@ MOCHITEST_BROWSER_FILES = \
+ 		browser_scratchpad_bug740948_reload_and_run.js \
+ 		browser_scratchpad_bug_661762_wrong_window_focus.js \
+ 		browser_scratchpad_bug_644413_modeline.js \
++		browser_scratchpad_bug_877331_console.js \
+ 		head.js \
+ 
+ # Disable test due to bug 807234 becoming basically permanent
